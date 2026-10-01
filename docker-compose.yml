@@ -1,0 +1,21 @@
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: postgres-lab2
+
+    env_file:
+      - demo.env
+
+  pinger:
+    image: db-pinger:1.0
+
+    container_name: db-pinger
+
+    env_file:
+      - demo.env
+
+    volumes:
+      - ./logs:/app/logs

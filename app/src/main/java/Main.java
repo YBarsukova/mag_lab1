@@ -1,11 +1,12 @@
 import org.postgresql.ds.PGSimpleDataSource;
 
+import java.io.FileWriter;
 import java.io.InputStream;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.time.LocalDateTime;
 import java.util.Properties;
-import java.util.Scanner;
 
 public class Main {
 
@@ -27,13 +28,12 @@ public class Main {
         int port = Integer.parseInt(config.getProperty("port"));
         String database = config.getProperty("database");
 
-        Scanner scanner = new Scanner(System.in);
+        String login = System.getenv("DB_USER");
+        String password = System.getenv("DB_PASSWORD");
 
-        System.out.print("Логин: ");
-        String login = scanner.nextLine();
+        int interval = Integer.parseInt(System.getenv("PING_INTERVAL"));
 
-        System.out.print("Пароль: ");
-        String password = scanner.nextLine();
+        String logFile = System.getenv("LOG_FILE");
 
         PGSimpleDataSource dataSource = new PGSimpleDataSource();
 
@@ -44,14 +44,79 @@ public class Main {
         dataSource.setUser(login);
         dataSource.setPassword(password);
 
-        try (Connection connection = dataSource.getConnection();
-             Statement statement = connection.createStatement();
-             ResultSet resultSet = statement.executeQuery("SELECT VERSION();")) {
+        // Не даём приложению бесконечно ждать сеть
+        dataSource.setConnectTimeout(5);
+        dataSource.setSocketTimeout(5);
 
-            if (resultSet.next()) {
-                System.out.println("done");
-                System.out.println(resultSet.getString(1));
+        while (true) {
+            try {
+                checkDatabase(dataSource, logFile);
+            } catch (Exception e) {
+                logError("Ошибка подключения к БД: " + e.getMessage(), logFile);
             }
+
+            // Даже после ошибки будет следующая попытка
+            Thread.sleep(interval * 1000L);
+        }
+    }
+
+    private static void checkDatabase(
+            PGSimpleDataSource dataSource,
+            String logFile
+    ) throws Exception {
+
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+
+            statement.setQueryTimeout(5);
+
+            try (ResultSet resultSet =
+                         statement.executeQuery("SELECT VERSION();")) {
+
+                if (resultSet.next()) {
+                    String version = resultSet.getString(1);
+
+                    logOut("Подключение успешно", logFile);
+
+                    if (version != null && version.startsWith("PostgreSQL 18")) {
+                        logOut("Ответ БД: " + version, logFile);
+                    } else {
+                        logOut("Нетипичный ответ БД: " + version, logFile);
+                    }
+                } else {
+                    logOut("Нетипичный ответ БД: пустой результат", logFile);
+                }
+            }
+        }
+    }
+
+    private static void logOut(String message, String logFile) {
+        String log = LocalDateTime.now() + " " + message;
+
+        System.out.println(log);
+
+        writeToFile(log, logFile);
+    }
+
+    private static void logError(String message, String logFile) {
+        String log = LocalDateTime.now() + " " + message;
+
+        System.err.println(log);
+
+        writeToFile(log, logFile);
+    }
+
+    private static void writeToFile(String message, String logFile) {
+        if (logFile == null || logFile.isBlank()) {
+            return;
+        }
+
+        try (FileWriter writer = new FileWriter(logFile, true)) {
+            writer.write(message + System.lineSeparator());
+        } catch (Exception e) {
+            System.err.println(
+                    "Не удалось записать лог в файл: " + e.getMessage()
+            );
         }
     }
 }
